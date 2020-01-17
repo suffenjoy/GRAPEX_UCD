@@ -1,0 +1,57 @@
+---
+title: "PRI_RipTower_ts"
+author: "Zhehan"
+date: "January 16, 2020"
+output: html_document
+---
+
+#Package
+```{r}
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(readxl)
+```
+
+#Read Files into R
+```{r}
+path_pri <- "C:/Users/zt92/Box Sync/GRAPEX/PRI_tower"
+
+#site1
+site1 <- read_excel(file.path(path_pri, "RippSoils_1_PRI.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","Down532","Down570","PRI_Ind"))
+str(site1)
+site1 <- site1[,c("TIMESTAMP","Site", "Down532", "Down570")]
+site1$Site <- "Block_1"
+#site2
+site2 <- read_excel(file.path(path_pri, "RippSoils_2_PRI.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","PRI","Down532","Up532-2","Down570","Up570-2","PRI_Ind1","PRI_Ind2", "NAs"))
+site2 <- site2[,c("TIMESTAMP","Site", "Down532","Up532-2","Down570","Up570-2")]
+site2$Site <- "Block_2"
+#Site3
+site3 <- read_excel(file.path(path_pri, "RippSoils_3_PRI.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","Down532","Down570","PRI_Ind"))
+str(site3)
+site3 <- site3[,c("TIMESTAMP","Site", "Down532", "Down570")]
+site3$Site <- "Block_3"
+#Site4 
+site4 <- read_excel(file.path(path_pri, "RippSoils_4_PRI.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","PRI","Down532","Up532-4","Down570","Up570-4","PRI_Ind1","PRI_Ind2"))
+site4 <- site4[,c("TIMESTAMP","Site", "Down532","Up532-4","Down570","Up570-4")]
+site4$Site <- "Block_4"
+```
+
+#Subset them 
+```{r}
+#subset the time between 05/21 to 08/29
+interval_15m <- seq.POSIXt(as.POSIXct("2019-05-21 00:00:00", tz = "UTC"), as.POSIXct("2019-08-29 23:45:00", tz= "UTC"), by = "15 min")
+interval_15m <- data.frame("TIMESTAMP" = interval_15m)
+##merge
+test <- merge(interval_15m, site1, by = "TIMESTAMP", all.x = TRUE)
+##add date 
+site1$Date <- lubridate::date(site1$TIMESTAMP)
+site2$Date <- lubridate::date(site2$TIMESTAMP)
+site3$Date <- lubridate::date(site3$TIMESTAMP)
+site4$Date <- lubridate::date(site4$TIMESTAMP)
+##add time
+
+#only the 
+PRIall <- rbind(site1, site2, site3, site4)
+```
+
