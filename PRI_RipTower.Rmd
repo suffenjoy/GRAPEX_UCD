@@ -37,21 +37,61 @@ site4 <- site4[,c("TIMESTAMP","Site", "Down532","Up532-4","Down570","Up570-4")]
 site4$Site <- "Block_4"
 ```
 
-#Subset them 
+#Data cleaning 
 ```{r}
-#subset the time between 05/21 to 08/29
-interval_15m <- seq.POSIXt(as.POSIXct("2019-05-21 00:00:00", tz = "UTC"), as.POSIXct("2019-08-29 23:45:00", tz= "UTC"), by = "15 min")
-interval_15m <- data.frame("TIMESTAMP" = interval_15m)
-##merge
-test <- merge(interval_15m, site1, by = "TIMESTAMP", all.x = TRUE)
 ##add date 
 site1$Date <- lubridate::date(site1$TIMESTAMP)
 site2$Date <- lubridate::date(site2$TIMESTAMP)
 site3$Date <- lubridate::date(site3$TIMESTAMP)
 site4$Date <- lubridate::date(site4$TIMESTAMP)
-##add time
+#subset the time between 05/21 to 08/29
+site1 <- subset(site1, Date>= "2019-05-21" & Date <= "2019-08-26")
+site2 <- subset(site2, Date>= "2019-05-21" & Date <= "2019-08-26")
+site3 <- subset(site3, Date>= "2019-05-21" & Date <= "2019-08-26")
+site4 <- subset(site4, Date>= "2019-05-21" & Date <= "2019-08-26")
+dim(site1);dim(site2);dim(site3);dim(site4) #they have the same dimension
+#there're quite a lot of missing data in site 2 (mainly from 07/26 to 08/09)
 
-#only the 
-PRIall <- rbind(site1, site2, site3, site4)
+##Combine them together 
+PRIall <- data.frame("Site" = rep(c("Block1","Block2","Block3","Block4"), each = 9408), 
+                     "TIMESTAMP" = c(site1$TIMESTAMP, site2$TIMESTAMP, site3$TIMESTAMP, site4$TIMESTAMP),
+                     "Down532" = c(site1$Down532, site2$Down532, site3$Down532, site4$Down532), 
+                     "Down570" = c(site1$Down570, site2$Down570, site3$Down570, site4$Down570),
+                     "Up532-2" = c(site2$`Up532-2`, site2$`Up532-2`, site2$`Up532-2`, site2$`Up532-2`),
+                     "Up570-2" = c(site2$`Up570-2`, site2$`Up570-2`, site2$`Up570-2`, site2$`Up570-2`),
+                     "R532-2" = 0, 
+                     "R570-2" = 0,
+                     "PRI-2" = 0, 
+                     "Up532-4" = c(site4$`Up532-4`, site4$`Up532-4`, site4$`Up532-4`, site4$`Up532-4`),
+                     "Up570-4" = c(site4$`Up570-4`, site4$`Up570-4`, site4$`Up570-4`, site4$`Up570-4`),
+                     "R532-4" = 0,
+                     "R570-4" = 0,
+                     "PRI-4" = 0,
+                     "Up532-a" = 0, 
+                     "Up570-a" = 0, 
+                     "R532-a" = 0, 
+                     "R570-a" = 0,
+                     "PRI-a" = 0)
+PRIall$Date <- lubridate::date(PRIall$TIMESTAMP)
+dim(PRIall)
+
+##calculate some columns 
+PRIall$R532.2 = PRIall$Down532/PRIall$Up532.2
+PRIall$R570.2 = PRIall$Down570/PRIall$Up570.2
+PRIall$PRI.2 = (PRIall$R532.2 - PRIall$R570.2)/(PRIall$R532.2 + PRIall$R570.2)
+PRIall$R532.4 = PRIall$Down532/PRIall$Up532.4
+PRIall$R570.4 = PRIall$Down570/PRIall$Up570.4
+PRIall$PRI.4 = (PRIall$R532.4 - PRIall$R570.4)/(PRIall$R532.4 + PRIall$R570.4)
+PRIall$Up532.a = rowMeans(cbind(PRIall$Up532.2, PRIall$Up532.4),na.rm = TRUE)
+PRIall$Up570.a = rowMeans(cbind(PRIall$Up570.2, PRIall$Up570.4),na.rm = TRUE)
+PRIall$R532.a = PRIall$Down532/PRIall$Up532.a
+PRIall$R570.a = PRIall$Down570/PRIall$Up570.a
+PRIall$PRI.a = (PRIall$R532.a - PRIall$R570.a)/(PRIall$R532.a + PRIall$R570.a)
+
+```
+
+#exploration plots
+```{r}
+#
 ```
 
