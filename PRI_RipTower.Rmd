@@ -15,6 +15,7 @@ library(data.table)
 library(gridExtra)
 library(zoo)
 library(plantecophys)
+library(reshape2)
 ```
 
 #Read Files into R
@@ -181,16 +182,22 @@ cimis_rip$Hour..PST. <- sapply(cimis_rip$Hour..PST., function(x){
 cimis_rip$Time <- paste(cimis_rip$Date, cimis_rip$Hour..PST.)
 cimis_rip$Time <- strptime(cimis_rip$Time, format = "%Y-%m-%d %H%M")
 #subset
-cimis_rip <- cimis_rip[,c("Date", "Air.Temp..C.", "Rel.Hum....", "Time")]
-names(cimis_rip) <- c("Date", "Air_Temp", "Rel_Hum", "TIMESTAMP")
+cimis_rip <- cimis_rip[,c("Date", "Air.Temp..C.", "Rel.Hum....", "Sol.Rad..W.sq.m.","Time")]
+names(cimis_rip) <- c("Date", "Air_Temp", "Rel_Hum", "Sol_Rad", "TIMESTAMP")
 cimis_rip$Time <- hour(cimis_rip$TIMESTAMP) + minute(cimis_rip$TIMESTAMP)/60 + second(cimis_rip$TIMESTAMP)/3600
 head(cimis_rip)
 tail(cimis_rip)
+#from 05/21 to 08/26
+cimis_rip <- subset(cimis_rip, Date >= "2019-05-21", Date <= "2019-08-26")
+
+#calculate VPD
+cimis_rip$VPD <- RHtoVPD(RH = cimis_rip$Rel_Hum, TdegC = cimis_rip$Air_Temp)
+
+ggplot(subset(cimis_rip, Date == "2019-08-22"), aes(x = Time, y = Air_Temp)) + geom_line()
 ```
 ##Diurnal cycle
 ```{r}
 cimis_diurnal <- subset(cimis_rip, Time >= 8 & Time <= 19)
-cimis_diurnal$VPD <- RHtoVPD(cimis_diurnal$Rel_Hum, cimis_diurnal$Air_Temp)
 
 p1 <- ggplot(subset(cimis_diurnal, Date >= "2019-06-24" & Date <= "2019-06-27"), aes(x = Time, y = VPD, color = as.factor(Date))) + geom_line(size = 1)+labs(color ="Date")
 p2 <- ggplot(subset(cimis_diurnal, Date >= "2019-07-28" & Date <= "2019-07-31"), aes(x = Time, y = VPD, color = as.factor(Date))) + geom_line(size = 1)+labs(color ="Date")
@@ -203,7 +210,7 @@ grid.arrange(p1,p2,p3, nrow =3 )
 cimis_noon <- subset(cimis_rip, Time > 11 & Time <15)
 cimis_noon <- aggregate(cimis_noon[,c("Air_Temp","Rel_Hum")], by = list("Date"  = cimis_noon$Date), FUN = mean)
 cimis_noon$VPD <- RHtoVPD(RH = cimis_noon$Rel_Hum, TdegC = cimis_noon$Air_Temp)
-cimis_noon <- subset(cimis_noon, Date<= "2019-08-26")
+
 ggplot(cimis_noon, aes(x = Date, y = Air_Temp)) + geom_line()
 ggplot(cimis_noon, aes(x = Date, y = VPD)) + geom_line()
 
@@ -218,6 +225,83 @@ p
 ```
 
 #NDVI and LAI
+##Read from GEE
+```{r}
+##NDVI 
+path_gee <- "C:/Users/zt92/Box Sync/GRAPEX/GEE"
+s2_ndvi <- read.csv(file.path(path_gee, "Sen2_NDVI_RIPtower_20190315_20191101.csv"))
+names(s2_ndvi) <- c("Date","Block4","Block3","Block2","Block1")
+s2_ndvi$Date <- as.Date(s2_ndvi$Date, format = "%b %d, %Y")
+#change from wide to long 
+s2_ndvi <- reshape2::melt(s2_ndvi, id.vars = c("Date"), value.name = "NDVI")
+names(s2_ndvi)[2] <- "Site"
+str(s2_ndvi)
+#subset dates 
+s2_ndvi <- subset(s2_ndvi, Date != "2019-05-27")
+s2_ndvi <- subset(s2_ndvi, Date >= "2019-05-21" & Date <= "2019-08-26")
+#there are two values per date per point 
+s2_ndvi <- aggregate(s2_ndvi$NDVI, by = list("Date" = s2_ndvi$Date, "Site"= s2_ndvi$Site), FUN = mean)
+names(s2_ndvi)[3] <- "NDVI"
+ggplot(s2_ndvi[!is.na(s2_ndvi$NDVI),], aes(x = Date, y = NDVI, color = Site)) + geom_point() + geom_line()
+
+
+##LAI
+s2_lai <- read.csv(file.path(path_gee, "Sen2_LAI_RIPtower_20190315_20191101.csv"))
+names(s2_lai) <- c("Date","Block4","Block3","Block2","Block1")
+s2_lai$Date <- as.Date(s2_lai$Date, format = "%b %d, %Y")
+#change from wide to long 
+s2_lai <- reshape2::melt(s2_lai, id.vars = c("Date"), value.name = "LAI")
+names(s2_lai)[2] <- "Site"
+str(s2_lai)
+#subset dates 
+s2_lai <- subset(s2_lai, Date != "2019-05-27")
+s2_lai <- subset(s2_lai, Date >= "2019-05-21" & Date <= "2019-08-26")
+#there are two values per date per point 
+s2_lai <- aggregate(s2_lai$LAI, by = list("Date" = s2_lai$Date, "Site"= s2_lai$Site), FUN = mean)
+names(s2_lai)[3] <- "LAI"
+ggplot(s2_lai[!is.na(s2_lai$LAI),], aes(x = Date, y = LAI, color = Site)) + geom_point() + geom_line()
+
+```
+
+##Combine with the Daily PRI 
+```{r}
+#PRIdaily_s2 <- merge(PRI_5day, s2_ndvi, by = c("Site","Date"), all.x = TRUE)
+PRIdaily_s2 <- merge(PRI_5day, s2_ndvi, by = c("Site","Date"))
+PRIdaily_s2 <- merge(PRIdaily_s2, s2_lai, by = c("Site","Date"))
+
+dim(PRIdaily_s2)
+dim(PRI_daily)
+dim(PRI_5day)
+
+head(PRIdaily_s2)
+
+PRIdaily_s2$NDVI
+PRIdaily_s2$PRI_NDVI <- PRIdaily_s2$PRI/PRIdaily_s2$NDVI
+PRIdaily_s2$PRI_LAI <- PRIdaily_s2$PRI/PRIdaily_s2$LAI
+
+ggplot(PRIdaily_s2, aes(x = Date, y= PRI_NDVI, color = Site)) + geom_point() + geom_line()
+ggplot(PRIdaily_s2, aes(x = Date, y= PRI_LAI, color = Site)) + geom_point() + geom_line()
+
+#scale to (0,1)
+PRIdaily_s2 <- PRIdaily_s2 %>% mutate(PRI_scale = PRI - min(PRI, na.rm = TRUE)/(max(PRI, na.rm = TRUE)-min(PRI, na.rm = TRUE)))
+#distribution 
+hist(PRIdaily_s2$PRI)
+hist(PRIdaily_s2$PRI_scale)
+
+PRIdaily_s2 <- PRIdaily_s2 %>% mutate(NDVI_scale = NDVI - min(NDVI, na.rm = TRUE)/(max(NDVI, na.rm = TRUE)-min(NDVI, na.rm = TRUE)))
+PRIdaily_s2 <- PRIdaily_s2 %>% mutate(LAI_scale = LAI - min(LAI, na.rm = TRUE)/(max(LAI, na.rm = TRUE)-min(LAI, na.rm = TRUE)))
+
+PRIdaily_s2$PRI_NDVI_scale <- PRIdaily_s2$PRI_scale - PRIdaily_s2$NDVI_scale
+PRIdaily_s2$PRI_LAI_scale <- PRIdaily_s2$PRI_scale - PRIdaily_s2$LAI_scale
+
+ggplot(PRIdaily_s2, aes(x = Date, y= PRI_NDVI_scale, color = Site)) + geom_point() + geom_line()
+ggplot(PRIdaily_s2, aes(x = Date, y= PRI_LAI_scale, color = Site)) + geom_point() + geom_line()
+
+#https://www.sciencedirect.com/science/article/pii/S0034425716304941#f0055
+
+#add chlorophyll content index
+```
+
 
 #Diurnal Cycle
 
@@ -434,15 +518,43 @@ grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
 ```
 
 ####Choose the best one for demonstration 
+#####Block 4 on 2019-08-22
 ```{r}
-p <- ggplot(cimis_noon, aes(x = Date))
-p <- p + geom_line(aes(y = Air_Temp, color = "Air Temperature"), size = 0.8)
-p <- p + geom_line(aes(y = VPD*7, color = "VPD"), size = 0.8)
-p <- p + scale_y_continuous(sec.axis = sec_axis(~./7,name = "VPD (kPa)"))
-p <- p + scale_color_manual(values = c("blue","red"))
-p <- p + labs(y = "Air Temperature (°C)", x = "Date", color = "Weather Parameter")
-p <- p + theme(legend.position = c(0.8, 0.1))
-p
+#combine with hourly weather data
+cimis_rip$TIMESTAMP <- force_tz(cimis_rip$TIMESTAMP, tz="UTC")
+temp_split <- split(PRIall_ma, PRIall_ma$Site)
+length(temp_split)
+temp_split <- lapply(temp_split, function(x){merge(x, cimis_rip[,c("Air_Temp","Rel_Hum","Sol_Rad","VPD","TIMESTAMP")], by = "TIMESTAMP", all.x = TRUE)})
+PRIma_weather <- do.call(rbind, temp_split)
+row.names(PRIma_weather) <- NULL
+head(PRIma_weather)
+#PRIma_weather <- merge(PRIall_ma, cimis_rip[,c("Air_Temp","Rel_Hum","Sol_Rad","TIMESTAMP")], by = "TIMESTAMP", all.x = TRUE)
+
+#validate whether the tz is correct 
+p1<- ggplot(subset(noon_selection(PRIma_weather, 0, 23), Date >= "2019-08-21" & Date <= "2019-08-23" & Site == "Block4"), aes(x = TIMESTAMP, y = Air_Temp, color = "Air Temperature")) + geom_line() + geom_point()
+p2 <- ggplot(subset(cimis_rip, Date >= "2019-08-21" & Date <= "2019-08-23"), aes(x = TIMESTAMP, y = Air_Temp, color = "Air Temperature")) + geom_point()
+grid.arrange(p1,p2, nrow =2 )
+
+
+#plot 
+ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-21" & Site == "Block4"), aes(x = Time, y = Sol_Rad)) + geom_point()
+ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-21" & Site == "Block4"), aes(x = Time, y = VPD)) + geom_point()
+
+##Air Temperature
+p1 <- ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-22" & Site == "Block4"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)  + geom_point(aes(y = Air_Temp*0.05-1.45, color = "Air Temperature"), size = 1.5) + scale_y_continuous(sec.axis = sec_axis(~(.+1.45)/0.05, name = "Air Temperature (°C)"))  + labs(y = "PRI", x = "Time of Day", color = "Legend")  + theme(legend.position = c(0.2, 0.1), text = element_text(size = 14)) + scale_x_continuous(breaks = seq(10, 19, 2)) + scale_color_manual(values = c("tomato", "steelblue3")) + ggtitle("2019-08-22 Block 4")
+p1
+##Solar Radiation 
+p2 <- ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-22" & Site == "Block4"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)  + geom_point(aes(y = Sol_Rad*0.00067, color = "Solar Radiation"), size = 1.5) + scale_y_continuous(sec.axis = sec_axis(~(.)/0.00067, name = "Solar Radiation (W/m2)"), breaks = seq(-0.2, 0.7, 0.2))  + labs(y = "PRI", x = "Time of Day", color = "Legend") + scale_color_manual(values = c("steelblue3", "hotpink3")) + theme(legend.position = c(0.2, 0.1), text = element_text(size = 12)) + scale_x_continuous(breaks = seq(10, 19, 2))
+p2
+##VPD
+p3 <- ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-22" & Site == "Block4"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)  + geom_point(aes(y = VPD*0.25-0.575, color = "VPD"), size = 1.5) + scale_y_continuous(sec.axis = sec_axis(~(.+0.575)/0.25, name = "Vapor Pressure Deficit (kPa)"))  + labs(y = "PRI", x = "Time of Day", color = "Legend") + scale_color_manual(values = c("steelblue3", "tomato")) + theme(legend.position = c(0.4, 0.1) ,text = element_text(size = 14)) + scale_x_continuous(breaks = seq(10, 19, 2)) 
+p3
+
+
+```
+#####Block 2 on 2019-08-22
+```{r}
+ggplot(subset(noon_selection(PRIma_weather, 10, 18), Date == "2019-08-20" & Site == "Block1"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)
 
 ```
 
