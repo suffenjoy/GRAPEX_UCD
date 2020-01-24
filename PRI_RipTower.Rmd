@@ -11,6 +11,10 @@ library(lubridate)
 library(ggplot2)
 library(dplyr)
 library(readxl)
+library(data.table)
+library(gridExtra)
+library(zoo)
+library(plantecophys)
 ```
 
 #Read Files into R
@@ -88,10 +92,357 @@ PRIall$R532.a = PRIall$Down532/PRIall$Up532.a
 PRIall$R570.a = PRIall$Down570/PRIall$Up570.a
 PRIall$PRI.a = (PRIall$R532.a - PRIall$R570.a)/(PRIall$R532.a + PRIall$R570.a)
 
+PRIall$Time <- lubridate::hour(PRIall$TIMESTAMP) + minute(PRIall$TIMESTAMP)/60 + second(PRIall$TIMESTAMP)/3600
 ```
 
-#exploration plots
+#Seasonal Change 
+##Function to select Only noon time and dates
 ```{r}
-#
+noon_selection <- function(data, early, late){
+  data_noon <- data[data$Time >= early & data$Time <= late,]
+  return(data_noon)
+}
+
+date_selection <- function(data, begin, end){
+  data_date_selection <- data[data$Date >= begin & data$Date <= end,]
+  return(data_date_selection)
+}
+
+
+#apply
+PRInoon <- noon_selection(PRIall, early = 12, late = 14)
+unique(PRInoon$Time)
+```
+##Function to calculate daily average using the noon time only
+```{r}
+#function  
+daily_ave <- function(data, early, late, begin, end){
+  #between certain dates
+  PRI_date <- date_selection(data, begin, end)
+  #noon average
+  PRI_date_noon <- noon_selection(PRI_date, early, late)
+  #split
+  PRI_split <- split(PRI_date_noon, PRI_date_noon$Date)
+  #lapply
+  PRI_ave <- lapply(lapply(PRI_split, "[[", 14), mean)
+  PRI_ave <- data.frame("Date" = ymd(names(PRI_ave)), "PRI" = unlist(PRI_ave))
+  #result
+  row.names(PRI_ave) <- NULL
+  return(PRI_ave)
+}
+
+
+PRI_daily_1 <- daily_ave(subset(PRIall, Site == "Block1"), 11,15, "2019-05-21", "2019-08-26")
+PRI_daily_1$Site = "Block1"
+PRI_daily_2 <- daily_ave(subset(PRIall, Site == "Block2"), 11,15, "2019-05-21", "2019-08-26")
+PRI_daily_2$Site = "Block2"
+PRI_daily_3 <- daily_ave(subset(PRIall, Site == "Block3"), 11,15, "2019-05-21", "2019-08-26")
+PRI_daily_3$Site = "Block3"
+PRI_daily_4 <- daily_ave(subset(PRIall, Site == "Block4"), 11,15, "2019-05-21", "2019-08-26")
+PRI_daily_4$Site = "Block4"
+PRI_daily <- rbind(PRI_daily_1, PRI_daily_2, PRI_daily_3, PRI_daily_4)
+
+ggplot(PRI_daily, aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point() + geom_line() + ggtitle("PRI Daily Average") + ylim(c(-0.15, 0.15)) + labs(color = "Site")
+ggplot(subset(PRI_daily, Site!= "Block4"), aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point() + geom_line() + ggtitle("PRI Daily Average") + ylim(c(-0.15, 0.1)) + labs(color = "Site")
+
+```
+##moving average to smooth the data
+```{r}
+PRI_5day_1 <- rollmean(PRI_daily_1$PRI, k = 5, fill = NA)
+PRI_5day_1 <- data.frame("Date" = PRI_daily_1$Date, "PRI" = PRI_5day_1, Site = "Block1")
+PRI_5day_2 <- rollmean(PRI_daily_2$PRI, k = 5, fill = NA)
+PRI_5day_2 <- data.frame("Date" = PRI_daily_2$Date, "PRI" = PRI_5day_2, Site = "Block2")
+PRI_5day_3 <- rollmean(PRI_daily_3$PRI, k = 5, fill = NA)
+PRI_5day_3 <- data.frame("Date" = PRI_daily_3$Date, "PRI" = PRI_5day_3, Site = "Block3")
+PRI_5day_4 <- rollmean(PRI_daily_4$PRI, k = 5, fill = NA)
+PRI_5day_4 <- data.frame("Date" = PRI_daily_4$Date, "PRI" = PRI_5day_4, Site = "Block4")
+
+PRI_5day <- rbind(PRI_5day_1, PRI_5day_2, PRI_5day_3, PRI_5day_4)
+ggplot(PRI_5day, aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point() + geom_line() + ggtitle("PRI Time Series (5-Day-Average)") + labs(color = "Site")
+
+#without Block 4
+ggplot(subset(PRI_5day, Site!="Block4"), aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point()  + geom_line() + ggtitle("PRI Time Series (5-Day-Average)") + labs(color = "Site")
+
+```
+
+#Weather data from CIMIS
+##Read CIMIS data
+```{r}
+path_weather <- "C:/Users/zt92/Box Sync/GRAPEX/Weather"
+cimis_rip <- read.csv(file.path(path_weather, "CIMIS#007_Hourly_20190521_20190901.csv"))
+head(cimis_rip)
+cimis_rip$Date <- as.Date(as.character(cimis_rip$Date), "%m/%d/%Y")
+
+cimis_rip <- cimis_rip[!is.na(cimis_rip$Date),]
+cimis_rip$Hour..PST. <- sapply(cimis_rip$Hour..PST., function(x){
+  if(nchar(x)==3){x=paste0("0",x)}
+    else{x = as.character(x)}}
+  )
+cimis_rip$Time <- paste(cimis_rip$Date, cimis_rip$Hour..PST.)
+cimis_rip$Time <- strptime(cimis_rip$Time, format = "%Y-%m-%d %H%M")
+#subset
+cimis_rip <- cimis_rip[,c("Date", "Air.Temp..C.", "Rel.Hum....", "Time")]
+names(cimis_rip) <- c("Date", "Air_Temp", "Rel_Hum", "TIMESTAMP")
+cimis_rip$Time <- hour(cimis_rip$TIMESTAMP) + minute(cimis_rip$TIMESTAMP)/60 + second(cimis_rip$TIMESTAMP)/3600
+head(cimis_rip)
+tail(cimis_rip)
+```
+##Diurnal cycle
+```{r}
+cimis_diurnal <- subset(cimis_rip, Time >= 8 & Time <= 19)
+cimis_diurnal$VPD <- RHtoVPD(cimis_diurnal$Rel_Hum, cimis_diurnal$Air_Temp)
+
+p1 <- ggplot(subset(cimis_diurnal, Date >= "2019-06-24" & Date <= "2019-06-27"), aes(x = Time, y = VPD, color = as.factor(Date))) + geom_line(size = 1)+labs(color ="Date")
+p2 <- ggplot(subset(cimis_diurnal, Date >= "2019-07-28" & Date <= "2019-07-31"), aes(x = Time, y = VPD, color = as.factor(Date))) + geom_line(size = 1)+labs(color ="Date")
+p3 <- ggplot(subset(cimis_diurnal, Date >= "2019-08-21" & Date <= "2019-08-24"), aes(x = Time, y = VPD, color = as.factor(Date))) + geom_line(size = 1)+labs(color ="Date")
+grid.arrange(p1,p2,p3, nrow =3 )
+```
+
+##Noon average
+```{r}
+cimis_noon <- subset(cimis_rip, Time > 11 & Time <15)
+cimis_noon <- aggregate(cimis_noon[,c("Air_Temp","Rel_Hum")], by = list("Date"  = cimis_noon$Date), FUN = mean)
+cimis_noon$VPD <- RHtoVPD(RH = cimis_noon$Rel_Hum, TdegC = cimis_noon$Air_Temp)
+cimis_noon <- subset(cimis_noon, Date<= "2019-08-26")
+ggplot(cimis_noon, aes(x = Date, y = Air_Temp)) + geom_line()
+ggplot(cimis_noon, aes(x = Date, y = VPD)) + geom_line()
+
+p <- ggplot(cimis_noon, aes(x = Date))
+p <- p + geom_line(aes(y = Air_Temp, color = "Air Temperature"), size = 0.8)
+p <- p + geom_line(aes(y = VPD*7, color = "VPD"), size = 0.8)
+p <- p + scale_y_continuous(sec.axis = sec_axis(~./7,name = "VPD (kPa)"))
+p <- p + scale_color_manual(values = c("blue","red"))
+p <- p + labs(y = "Air Temperature (°C)", x = "Date", color = "Weather Parameter")
+p <- p + theme(legend.position = c(0.8, 0.1))
+p
+```
+
+#NDVI and LAI
+
+#Diurnal Cycle
+
+###Upward sensor (solar radiantion )
+```{r}
+#diurnal cycle 
+##site 2
+p1 <- ggplot(subset(PRIall, Date > "2019-06-21" & Date < "2019-07-01"), aes(x = TIMESTAMP, y = Up532.2)) + geom_line() + ggtitle("Incoming Radiation Up532 Site 2") + xlab("") + ylab("Up532")
+p2 <- ggplot(subset(PRIall, Date > "2019-06-21" & Date < "2019-07-01"), aes(x = TIMESTAMP, y = Up570.2)) + geom_line() + ggtitle("Incoming Radiation Up570 Site 2") + xlab("Time") + ylab("Up570")
+grid.arrange(p1, p2, nrow = 2)
+##site 4
+p1 <- ggplot(subset(PRIall, Date > "2019-06-21" & Date < "2019-07-01"), aes(x = TIMESTAMP, y = Up532.4)) + geom_line() + ggtitle("Incoming Radiation Up532 Site 4") + xlab(" ") + ylab("Up532")
+p2 <- ggplot(subset(PRIall, Date > "2019-06-21" & Date < "2019-07-01"), aes(x = TIMESTAMP, y = Up570.4)) + geom_line() + ggtitle("Incoming Radiation Up570 Site 4") + xlab("Time") + ylab("Up570")
+grid.arrange(p1, p2, nrow = 2)
+##Average
+p1 <- ggplot(subset(PRIall, Date > "2019-06-21" & Date < "2019-07-01"), aes(x = TIMESTAMP, y = Up532.a)) + geom_line() + ggtitle("Incoming Radiation Up532 Average of Site 2 & Site 4") + xlab(" ") + ylab("Up532")
+p2 <- ggplot(subset(PRIall, Date > "2019-06-21" & Date < "2019-07-01"), aes(x = TIMESTAMP, y = Up570.a)) + geom_line() + ggtitle("Incoming Radiation Up570 Average of Site 2 & Site 4") + xlab("Time") + ylab("Up570")
+grid.arrange(p1, p2, nrow = 2)
+
+
+```
+
+###Downward sensor diurnal cycle
+```{r}
+##Site 1
+p1 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block1"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 Down532 Diurnal Radiance Late June")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p2 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block1"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 Down570 Diurnal Radiance Late June")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p3 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block1"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 Down532 Diurnal Radiance Late July")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p4 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block1"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 Down570 Diurnal Radiance Late July")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p5 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block1"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 Down532 Diurnal Radiance Late August")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p6 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block1"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 Down570 Diurnal Radiance Late August") + ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+#site 3
+p1 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block3"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 Down532 Diurnal Radiance Late June")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p2 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block3"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 Down570 Diurnal Radiance Late June")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p3 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block3"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 Down532 Diurnal Radiance Late July")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p4 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block3"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 Down570 Diurnal Radiance Late July")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p5 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block3"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 Down532 Diurnal Radiance Late August")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p6 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block3"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 Down570 Diurnal Radiance Late August") + ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+
+#Site 4
+p1 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 Down532 Diurnal Radiance Late June")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p2 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 Down570 Diurnal Radiance Late June")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p3 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 Down532 Diurnal Radiance Late July")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p4 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 Down570 Diurnal Radiance Late July")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p5 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = Down532, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 Down532 Diurnal Radiance Late August")+ ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+p6 <- ggplot(subset(noon_selection(PRIall, 5, 20), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = Down570, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 Down570 Diurnal Radiance Late August") + ylab("Radiance (W/m2·sr)") + ylim(c(0.00, 0.03)) + labs(color = "Date")
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+```
+
+###PRI diurnal cycle
+```{r}
+##Site 1
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 1 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03)) 
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+##Site 2
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 2 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 2 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 2 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 2 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 2 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 2 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03)) 
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+
+##Site 3
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 19), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall, 11, 19), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 19), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall, 11, 19), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 19), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall, 11, 19), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 3 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03)) 
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+##Site 4
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block 4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03)) 
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+
+```
+####Smoothing: aggregate to hourly 
+```{r}
+PRIall$Hour <- lubridate::hour(PRIall$TIMESTAMP)
+##Aggregate to 
+PRIall_hourly <- aggregate(PRIall$PRI.4, list("Site"=PRIall$Site, "Date"=PRIall$Date, "Time"=PRIall$Hour), FUN = function(x){mean(x, na.rm = TRUE)})
+PRIall_hourly <- PRIall_hourly[order(PRIall_hourly$Date),]
+names(PRIall_hourly)[4] <- "PRI.4"
+
+#Site 1
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+#Site 2
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+#Site 3
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_hourly, 9, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+
+#Site 4
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_hourly, 11, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_hourly, 11, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_hourly, 11, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+
+#Site 4
+#Site 4
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_hourly, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_hourly, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_hourly, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+```
+
+####Smoothing: moving average
+```{r}
+temp_split <- split(PRIall, list(PRIall$Site, PRIall$Date))
+ma_split <- lapply(temp_split, function(x){
+  x$PRI.4.ma = rollmean(x$PRI.4, k = 4, fill = NA)
+  return(x)
+})
+PRIall_ma <- do.call(rbind, a)
+row.names(PRIall_ma) <- NULL
+
+
+#Plots
+#Site 1
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block1"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block1"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block1"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block1"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block1 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+#Site 2
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block2"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block2"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block2"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block2"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block2 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+#Site 3
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block3"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block3"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block3"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_ma, 9, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block3"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block3 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+
+#Site 4
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_ma, 11, 18), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_ma, 11, 18), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_ma, 11, 18), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+
+#Site 4
+#Site 4
+p1 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p2 <- ggplot(subset(noon_selection(PRIall_ma, 11, 16), Date>"2019-06-23" & Date < "2019-06-28" & Site == "Block4"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late June")+ ylab("PRI")  + labs(color = "Date") #+ ylim(c(0.00, 0.03))
+p3 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late July")+ ylab("PRI") + labs(color = "Date")#+ ylim(c(0.00, 0.03)) 
+p4 <- ggplot(subset(noon_selection(PRIall_ma, 11, 16), Date>"2019-07-27" & Date < "2019-08-01" & Site == "Block4"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late July")+ ylab("PRI")  + labs(color = "Date")#+ ylim(c(0.00, 0.03))
+p5 <- ggplot(subset(noon_selection(PRIall, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+p6 <- ggplot(subset(noon_selection(PRIall_ma, 11, 16), Date>"2019-08-20" & Date < "2019-08-25" & Site == "Block4"), aes(x = Time, y = PRI.4.ma, color = as.factor(Date))) + geom_point() + geom_line() + ggtitle("Block4 PRI Diurnal Cycle Late August")  + labs(color = "Date") + ylab("PRI")#+ ylim(c(0.00, 0.03))
+grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
+
+```
+
+####Choose the best one for demonstration 
+```{r}
+p <- ggplot(cimis_noon, aes(x = Date))
+p <- p + geom_line(aes(y = Air_Temp, color = "Air Temperature"), size = 0.8)
+p <- p + geom_line(aes(y = VPD*7, color = "VPD"), size = 0.8)
+p <- p + scale_y_continuous(sec.axis = sec_axis(~./7,name = "VPD (kPa)"))
+p <- p + scale_color_manual(values = c("blue","red"))
+p <- p + labs(y = "Air Temperature (°C)", x = "Date", color = "Weather Parameter")
+p <- p + theme(legend.position = c(0.8, 0.1))
+p
+
 ```
 
