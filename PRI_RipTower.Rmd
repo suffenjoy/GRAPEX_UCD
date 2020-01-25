@@ -208,11 +208,14 @@ grid.arrange(p1,p2,p3, nrow =3 )
 ##Noon average
 ```{r}
 cimis_noon <- subset(cimis_rip, Time > 11 & Time <15)
-cimis_noon <- aggregate(cimis_noon[,c("Air_Temp","Rel_Hum")], by = list("Date"  = cimis_noon$Date), FUN = mean)
+cimis_noon <- aggregate(cimis_noon[,c("Air_Temp","Rel_Hum","Sol_Rad","VPD")], by = list("Date"  = cimis_noon$Date), FUN = mean)
 cimis_noon$VPD <- RHtoVPD(RH = cimis_noon$Rel_Hum, TdegC = cimis_noon$Air_Temp)
 
 ggplot(cimis_noon, aes(x = Date, y = Air_Temp)) + geom_line()
 ggplot(cimis_noon, aes(x = Date, y = VPD)) + geom_line()
+dates_s2 <- unique(PRIdaily_s2[!is.na(PRIdaily_s2$NDVI),]$Date)
+ggplot(cimis_noon[cimis_noon$Date %in% dates_s2,], aes(x = Date, y = Sol_Rad)) + geom_line()
+dates_s2 <- unique(PRIdaily_s2[!is.na(PRIdaily_s2$NDVI),]$Date)
 
 p <- ggplot(cimis_noon, aes(x = Date))
 p <- p + geom_line(aes(y = Air_Temp, color = "Air Temperature"), size = 0.8)
@@ -224,7 +227,7 @@ p <- p + theme(legend.position = c(0.8, 0.1))
 p
 ```
 
-#NDVI and LAI
+#Combine with NDVI and LAI
 ##Read from GEE
 ```{r}
 ##NDVI 
@@ -283,23 +286,50 @@ ggplot(PRIdaily_s2, aes(x = Date, y= PRI_NDVI, color = Site)) + geom_point() + g
 ggplot(PRIdaily_s2, aes(x = Date, y= PRI_LAI, color = Site)) + geom_point() + geom_line()
 
 #scale to (0,1)
-PRIdaily_s2 <- PRIdaily_s2 %>% mutate(PRI_scale = PRI - min(PRI, na.rm = TRUE)/(max(PRI, na.rm = TRUE)-min(PRI, na.rm = TRUE)))
+PRIdaily_s2 <- PRIdaily_s2 %>% mutate(PRI_scale = (PRI - min(PRI, na.rm = TRUE))/(max(PRI, na.rm = TRUE)-min(PRI, na.rm = TRUE)))
 #distribution 
 hist(PRIdaily_s2$PRI)
 hist(PRIdaily_s2$PRI_scale)
 
-PRIdaily_s2 <- PRIdaily_s2 %>% mutate(NDVI_scale = NDVI - min(NDVI, na.rm = TRUE)/(max(NDVI, na.rm = TRUE)-min(NDVI, na.rm = TRUE)))
-PRIdaily_s2 <- PRIdaily_s2 %>% mutate(LAI_scale = LAI - min(LAI, na.rm = TRUE)/(max(LAI, na.rm = TRUE)-min(LAI, na.rm = TRUE)))
+PRIdaily_s2 <- PRIdaily_s2 %>% mutate(NDVI_scale = (NDVI - min(NDVI, na.rm = TRUE))/(max(NDVI, na.rm = TRUE)-min(NDVI, na.rm = TRUE)))
+hist(PRIdaily_s2$NDVI_scale)
+PRIdaily_s2 <- PRIdaily_s2 %>% mutate(LAI_scale = (LAI - min(LAI, na.rm = TRUE))/(max(LAI, na.rm = TRUE)-min(LAI, na.rm = TRUE)))
+hist(PRIdaily_s2$LAI_scale)
 
 PRIdaily_s2$PRI_NDVI_scale <- PRIdaily_s2$PRI_scale - PRIdaily_s2$NDVI_scale
 PRIdaily_s2$PRI_LAI_scale <- PRIdaily_s2$PRI_scale - PRIdaily_s2$LAI_scale
 
+ggplot(PRIdaily_s2, aes(x = Date, y= PRI_scale, color = Site)) + geom_point() + geom_line()
+ggplot(PRIdaily_s2, aes(x = Date, y= LAI_scale, color = Site)) + geom_point() + geom_line()
+
 ggplot(PRIdaily_s2, aes(x = Date, y= PRI_NDVI_scale, color = Site)) + geom_point() + geom_line()
-ggplot(PRIdaily_s2, aes(x = Date, y= PRI_LAI_scale, color = Site)) + geom_point() + geom_line()
+
+
+ggplot(PRIdaily_s2[!is.na(PRIdaily_s2$PRI_LAI_scale),], aes(x = Date, y= PRI_LAI_scale, color = Site)) + geom_point(size = 3)  + theme_light() + ylab("PRIscale - LAIscale") + theme(text= element_text(size =  16)) + geom_line(size = 1)
+
+ggplot(PRIdaily_s2[!is.na(PRIdaily_s2$PRI_LAI_scale),], aes(x = Date, y= PRI, color = Site)) + geom_point(size = 3) + ylab("PRI") + theme(text= element_text(size =  16)) + geom_line(size = 1)
+ggplot(PRIdaily_s2[!is.na(PRIdaily_s2$PRI_LAI_scale),], aes(x = Date, y= LAI, color = Site)) + geom_point(size = 3)  + ylab("LAIgreen") + theme(text= element_text(size =  16)) + geom_line(size = 1)
+
+
+
+ggplot(s2_lai[!is.na(s2_lai$LAI),], aes(x = Date, y = LAI, color = Site)) + geom_point() + geom_line()
 
 #https://www.sciencedirect.com/science/article/pii/S0034425716304941#f0055
 
 #add chlorophyll content index
+#calculate 5-day average instead of moving window
+
+plot(PRIdaily_s2$NDVI, PRIdaily_s2$PRI)
+ggplot(PRIdaily_s2, aes(x = NDVI_scale, y = PRI_scale, color = Site)) + geom_point() + geom_smooth(method= "lm")
+
+
+temp_split <- split(PRIdaily_s2, PRIdaily_s2$Site)
+p1 <- ggplot(subset(PRIdaily_s2, Site == "Block1"), aes(x = NDVI, y = PRI, color = "red"))+ geom_point(size = 3)+geom_smooth(method = "lm", se = FALSE, size = 2, color = "blue") 
+p1
+lapply(temp_split, function(x){summary(lm(x$NDVI~x$PRI))$r.squared})
+lapply(temp_split, function(x){summary(lm(x$NDVI_scale~x$PRI_scale))$r.squared})
+
+
 ```
 
 
@@ -516,6 +546,60 @@ p6 <- ggplot(subset(noon_selection(PRIall_ma, 11, 16), Date>"2019-08-20" & Date 
 grid.arrange(p1, p2, p3, p4,p5, p6, nrow = 3, ncol = 2)
 
 ```
+####Baseline PRI for each day 
+```{r}
+#use 10am PRI as the baseline 
+temp_split <- split(PRIma_weather, list(PRIma_weather$Site, PRIma_weather$Date))
+for(i in 1:length(temp_split)){
+  #baseline 
+  temp_split[[i]]$PRIbl <- subset(temp_split[[i]], Time == 10)$PRI.4.ma
+  temp_split[[i]]$PRI.delta <- temp_split[[i]]$PRI.4.ma - temp_split[[i]]$PRIbl
+}
+PRIma_weather <- do.call(rbind, temp_split)
+
+temp_sb1 <- subset(noon_selection(PRIma_weather, 12, 14), Date >= "2019-07-26" & Date <="2019-08-26" & Site == "Block4")
+par(mfrow = c(1,1))
+plot(y = temp_sb1$PRI.delta, x = temp_sb1$Sol_Rad, xlim= c(850, 1000))
+cor(temp_sb1$PRI.delta, x= temp_sb1$Sol_Rad, use = "complete.obs")^2
+
+temp_sb2 <- subset(noon_selection(PRIma_weather, 14, 16), Date >= "2019-07-26" & Date <="2019-08-26" & Site == "Block4")
+plot(x=  temp_sb2$VPD, y = temp_sb2$PRI.4.ma)
+
+cor(temp_sb2$VPD, temp_sb2$PRI.4.ma, use = "complete.obs")^2
+
+cor(temp_sb2$VPD, temp_sb2$PRI.delta, use = "complete.obs")^2
+
+
+par(mfrow =c(4,3))
+dates_pri <- seq.Date(as.Date("2019-05-21"),as.Date("2019-08-26"),"1 day")
+for(i in 1:98){
+  temp_sb <- subset(noon_selection(PRIma_weather, 10, 19), Date == dates_pri[i] & Site == "Block4")
+  plot(x = temp_sb$Time, y = temp_sb$PRI.delta, xlab = "Time", ylab = "PRI Delta", main = paste("Block4",dates_pri[i], sep = " "))
+  
+}
+
+
+a <- subset(noon_selection(PRIma_weather, 11, 14), Date >= "2019-07-26" & Date <= "2019-08-26" & Site == "Block4")
+a <- subset(a , a$Sol_Rad>700)
+plot(x = a$Sol_Rad, y = a$PRI.delta)
+cor(x = a$Sol_Rad, y = a$PRI.delta, use = "complete.obs")^2
+cor(x = a$Sol_Rad, y = a$PRI.4.ma, use = "complete.obs")^2
+ggplot(a, aes(x = Sol_Rad, y = PRI.delta, color = "Solar Radiation")) + geom_point(size = 2) + geom_smooth(method = 'lm', formula = y~x, se = FALSE, colour = "skyblue2", size = 2)+theme(legend.position = "none", text = element_text(size = 14)) + xlab("Solar Radiation (W/m2)") + ylab("PRI delta") + theme_minimal(base_size = 16) + scale_color_manual(values =  'springgreen4')
+
+theme(legend.position = c(0.2, 0.1), text = element_text(size = 14))
+
+b <- subset(noon_selection(PRIma_weather, 13, 17), Date >= "2019-07-26" & Date <= "2019-08-26" & Site == "Block4")
+plot(x = b$VPD, y = b$PRI.delta)
+cor(x = b$VPD, y = b$PRI.delta, use = "complete.obs")^2
+cor(x = b$VPD, y = b$PRI.4.ma, use = "complete.obs")^2
+
+ggplot(b, aes(x = VPD, y = PRI.delta, color = "VPD")) + geom_point(size = 2) + geom_smooth(method = 'lm', formula = y~x, se = FALSE, colour = "skyblue2", size = 2)+theme(legend.position = c(0.2,0.1), text = element_text(size = 12)) + xlab("VPD (kPa)") + ylab("PRI delta")  + scale_color_manual(values = 'tomato') + theme_minimal(base_size = 16)
+
+ggplot(b, aes(x = VPD, y = PRI.delta, color = "VPD")) + geom_point() + geom_smooth(method = 'lm', formula = y~x, se = FALSE, colour = "skyblue2")+theme(text = element_text(size = 18)) + xlab("VPD (kPa)") + ylab("PRI") + theme_minimal() + scale_color_manual(values = 'tomato')
+
+
+```
+
 
 ####Choose the best one for demonstration 
 #####Block 4 on 2019-08-22
@@ -551,10 +635,59 @@ p3 <- ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-22" 
 p3
 
 
+par(mfrow =c(4,3))
+dates_pri <- seq.Date(as.Date("2019-05-21"),as.Date("2019-08-26"),"1 day")
+for(i in 1:98){
+  temp_sb <- subset(noon_selection(PRIma_weather, 10, 19), Date == dates_pri[i] & Site == "Block4")
+  plot(x = temp_sb$Time, y = temp_sb$PRI.4.ma, xlab = "Time", ylab = "PRI", main = paste("Block4",dates_pri[i], sep = " "))
+  
+}
+
+names(PRIma_weather) 
+PRIma_weather
+temp_sb1 <- subset(noon_selection(PRIma_weather, 12, 14), Date >= "2019-07-26" & Date <="2019-08-26" & Site == "Block4")
+par(mfrow = c(1,1))
+plot(y = temp_sb1$PRI.4.ma, x = temp_sb1$Sol_Rad)
+
+temp_sb2 <- subset(noon_selection(PRIma_weather, 14, 16), Date >= "2019-07-26" & Date <="2019-08-26" & Site == "Block4")
+plot(x=  temp_sb2$VPD, y = temp_sb2$PRI.4.ma)
+
+cor(temp_sb2$VPD, temp_sb2$PRI.4.ma, use = "complete.obs")^2
 ```
-#####Block 2 on 2019-08-22
+
+
+#-----------------------------------------------
+#For GRAPEX Meeting Presentation 
+##Diurnal Cycle
 ```{r}
-ggplot(subset(noon_selection(PRIma_weather, 10, 18), Date == "2019-08-20" & Site == "Block1"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)
+#Diurnal Cycle
+##with legend
+p2 <- ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-22" & Site == "Block4"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)  + geom_point(aes(y = Sol_Rad*0.00067, color = "Solar Radiation"), size = 1.5) + scale_y_continuous(sec.axis = sec_axis(~(.)/0.00067, name = "Solar Radiation (W/m2)"), breaks = seq(-0.2, 0.7, 0.2))  + labs(y = "PRI", x = "Time of Day", color = "Legend") + scale_color_manual(values = c("steelblue3", "springgreen4")) + theme( text = element_text(size = 14)) + scale_x_continuous(breaks = seq(10, 19, 2))
+p2
+p3 <- ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-22" & Site == "Block4"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)  + geom_point(aes(y = VPD*0.25-0.575, color = "VPD"), size = 1.5) + scale_y_continuous(sec.axis = sec_axis(~(.+0.575)/0.25, name = "Vapor Pressure Deficit (kPa)"))  + labs(y = "PRI", x = "Time of Day", color = "Legend") + scale_color_manual(values = c("steelblue3", "tomato")) + theme(text = element_text(size = 14)) + scale_x_continuous(breaks = seq(10, 19, 2)) 
+p3
+##Without legend
+p2 <- ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-22" & Site == "Block4"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)  + geom_point(aes(y = Sol_Rad*0.00067, color = "Solar Radiation"), size = 1.5) + scale_y_continuous(sec.axis = sec_axis(~(.)/0.00067, name = "Solar Radiation (W/m2)"), breaks = seq(-0.2, 0.7, 0.2))  + labs(y = "PRI", x = "Time of Day", color = "Legend") + scale_color_manual(values = c("steelblue3", "springgreen4")) + theme(legend.position = "none", text = element_text(size = 14)) + scale_x_continuous(breaks = seq(10, 19, 2))
+p2
+p3 <- ggplot(subset(noon_selection(PRIma_weather, 10, 19), Date == "2019-08-22" & Site == "Block4"), aes(x = Time)) + geom_line(aes(y = PRI.4.ma, color = "PRI"), size = 0.8)  + geom_point(aes(y = VPD*0.25-0.575, color = "VPD"), size = 1.5) + scale_y_continuous(sec.axis = sec_axis(~(.+0.575)/0.25, name = "Vapor Pressure Deficit (kPa)"))  + labs(y = "PRI", x = "Time of Day", color = "Legend") + scale_color_manual(values = c("steelblue3", "tomato")) + theme(legend.position = "none",text = element_text(size = 14)) + scale_x_continuous(breaks = seq(10, 19, 2)) 
+p3
+grid.arrange(p2, p3, nrow = 2)
+
+
+```
+##Correlation with weather information diurnal
+```{r}
+a <- subset(noon_selection(PRIma_weather, 11, 14), Date >= "2019-07-26" & Date <= "2019-08-26" & Site == "Block4")
+a <- subset(a , a$Sol_Rad>700)
+ggplot(a, aes(x = Sol_Rad, y = PRI.delta, color = "Solar Radiation")) + geom_point(size = 2) + geom_smooth(method = 'lm', formula = y~x, se = FALSE, colour = "skyblue2", size = 2)+theme(legend.position = "none", text = element_text(size = 14)) + xlab("Solar Radiation (W/m2)") + ylab("PRI delta") + theme_minimal(base_size = 16) + scale_color_manual(values =  'springgreen4')
+
+
+b <- subset(noon_selection(PRIma_weather, 13, 17), Date >= "2019-07-26" & Date <= "2019-08-26" & Site == "Block4")
+plot(x = b$VPD, y = b$PRI.delta)
+cor(x = b$VPD, y = b$PRI.delta, use = "complete.obs")^2
+cor(x = b$VPD, y = b$PRI.4.ma, use = "complete.obs")^2
+ggplot(b, aes(x = VPD, y = PRI.delta, color = "VPD")) + geom_point(size = 2) + geom_smooth(method = 'lm', formula = y~x, se = FALSE, colour = "skyblue2", size = 2)+theme(legend.position = c(0.2,0.1), text = element_text(size = 12)) + xlab("VPD (kPa)") + ylab("PRI delta")  + scale_color_manual(values = 'tomato') + theme_minimal(base_size = 16)
 
 ```
 
+##Seasonal Change
