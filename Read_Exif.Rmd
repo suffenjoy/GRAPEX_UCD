@@ -1,0 +1,60 @@
+---
+title: "Read_Exif"
+author: "Zhehan"
+date: "February 6, 2020"
+output: html_document
+---
+#Packages
+```{r}
+library(raster)
+library(exiftoolr)
+```
+
+#Read files
+```{r}
+path_thermal <- "C:/Users/zt92/Box Sync/BIOSTIMULANT TRIAL - SEASON 2/ZHEHAN/UAV raw images/20190810/thermal"
+
+img1_info <- exif_read(file.path(path_thermal, "DJI_0001.jpg"), tags = "*Focal*")
+names(img1_info)
+
+path_at <- "C:/Users/zt92/Box Sync/BIOSTIMULANT TRIAL - SEASON 2/ZHEHAN/UAV raw images/altum-capture"
+imgat_info <- exif_read(file.path(path_at, "IMG_0220_6.tif"))
+imgat_info 
+imgat_fpa <- exif_read(file.path(path_at, "IMG_0220_6.tif"), tags = "*Focal*")
+
+path_con <- "C:/Users/zt92/Box Sync/BIOSTIMULANT TRIAL - SEASON 2/ZHEHAN/UAV raw images/20190810/thermal_converted"
+imgcon_info <- exif_read(file.path(path_con, "DJI_0001.tif"), tags  = "*Temperature*")
+imgcon_info
+
+
+path_tif <- "C:/Users/zt92/Box Sync/BIOSTIMULANT TRIAL - SEASON 2/ZHEHAN/UAV raw images/20180718/thermal"
+imgtif_info <- exif_read(file.path(path_tif, "DJI_0556.tif"), tags = "*temperature*")
+imgtif_info
+
+imgtif <- raster(file.path(path_tif, "DJI_0556.tif"))
+max(values(imgtif))*0.04-273.15
+min(values(imgtif))*0.04-273.15
+
+
+CT <- function(path){
+  img_files <- list.files(path, pattern = ".tif")
+  info_df <- data.frame("Img"=NA,Time = NA,"CenTem"=NA,"Median"=NA,"Mean"=NA,"Max"=NA,"Min"=NA)
+  for(i in 1:length(img_files)){
+    ct <- exif_read(file.path(path, img_files[i]), tags  = "CentralTemperature")[,2]
+    time <- exif_read(file.path(path, img_files[i]), tags  = "CentralTemperature")[,2]
+    img <- raster(file.path(path, img_files[i]))
+    val <- values(img)
+    info_df[i,] <- c(img_files[i], ct, median(val), mean(val), max(val),min(val))
+  }
+  return(info_df)
+}
+
+test_ct <- CT(path_tif)
+plot(test_ct$CenTem, test_ct$Median)
+plot(test_ct$CenTem, test_ct$Min)
+plot(test_ct$CenTem, test_ct$Max)
+plot(test_ct$CenTem, test_ct$Mean)
+hist(as.numeric(test_ct$CenTem))
+
+```
+
