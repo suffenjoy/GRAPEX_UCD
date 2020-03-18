@@ -21,7 +21,7 @@ ALA_range = c(30, 60)
 hspot_range = c(0.05, 1)
 SB_range = c(0.05, 1)
 
-n = 100
+n = 100000
 paras <- data.frame("N" = min(N_range)+(max(N_range) - min(N_range))*runif(n),
                     "Cab" = min(Cab_range)+(max(Cab_range) - min(Cab_range))*runif(n),
                     "Cm" = min(Cm_range)+(max(Cm_range) - min(Cm_range))*runif(n),
@@ -53,13 +53,17 @@ spectrum <- PROSAIL(N = 1.3)
 plot(spectrum)
 
 spectra <- PROSAIL(parameterList = paras)
-plot(spectra, col = "red")
+plot(spectra, col = "red", main = "Running PROSAIL for 100,000 times")
 plot(subset(spectra, LAI>2 & LAI <4))
 
+#micasense
 df_micasense <- data.frame("center" = c(475, 560, 668, 717, 842), "fwhm" = c(32, 27, 16, 12, 57))
 spectra_micasense <- spectralResampling(spectra, df_micasense)
-plot(spectra_micasense, type = "b", main = "Micasense Rededge")
+plot(spectra_micasense, type = "b", main = "Micasense Rededge", col = "brown")
 
+spectra_sen2 <- spectralResampling(spectra, "Sentinel2")
+spectra_l8 <- spectralResampling(spectra, "Landsat8")
+plot(spectra_sen2, type = "b", main = "Sentinel-2")
 
 spectra_resampled <- spectralResampling(spectra, 13)
 ```
