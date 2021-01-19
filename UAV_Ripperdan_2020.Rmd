@@ -1,0 +1,480 @@
+---
+title: "R Notebook"
+output: html_notebook
+editor_options: 
+  chunk_output_type: inline
+---
+
+#Packages 
+```{r}
+library(raster)
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(sp)
+library(tidyr)
+library(lubridate)
+library(readxl)
+
+```
+
+
+#read macaw data
+##function 
+```{r}
+read_12band <- function(path, stacks){
+  uav_stacks <- raster::brick(file.path(path, stacks))
+  #subset to 1:12
+  uav_stacks <- subset(uav_stacks, 1:12)
+  #rename 
+  names(uav_stacks) <- c("X800","X450","X480","X530","X550","X570","X670","X700","X720","X740","X900","X970")
+  return(uav_stacks)
+}
+```
+
+##Read macaw from mobile hard drive
+```{r}
+path_macaw <- "D:/GRAPEX_2020/Processed"
+
+macaw_072620 <- read_12band(path_macaw, "RIP720_072620.tif")
+macaw_073020 <- read_12band(path_macaw, "RIP720_20200730.tif")
+macaw_080220 <- read_12band(path_macaw, "RIP720_20200802.tif")
+
+```
+
+#Read Shapefiles
+```{r}
+path_shp <- "C:/Users/tangz/Box Sync/GRAPEX/Shapefiles"
+list.files(path_shp)
+tower_rip720 <- shapefile(file.path(path_shp, "tower_rip720.shp"))
+tws_rip720 <- shapefile(file.path(path_shp, "tws_rip720.shp"))
+
+crs(tower_rip720)
+crs(tws_rip720)
+
+tower_rip720 <- spTransform(tower_rip720, macaw_080220@crs)
+tws_rip720 <- spTransform(tws_rip720, macaw_080220@crs)
+tws_rip720@data <- dplyr::select(tws_rip720@data, Name, Group, tv)
+tower_rip720@data <- dplyr::select(tower_rip720@data, Name, Group, tv)
+```
+
+#Vegetation index 
+##Calculate NDVI
+```{r}
+ndvi_072620_macaw <- (macaw_072620$X800 - macaw_072620$X670)/(macaw_072620$X800 + macaw_072620$X670)
+
+ndvi_073020_macaw <- (macaw_073020$X800 - macaw_073020$X670)/(macaw_073020$X800 + macaw_073020$X670)
+
+ndvi_080220_macaw <- (macaw_080220$X800 - macaw_080220$X670)/(macaw_080220$X800 + macaw_080220$X670)
+
+#output the ndvi 
+path_output <- "D:/GRAPEX_2020/Output"
+writeRaster(ndvi_072620_macaw, file.path(path_output, "NDVI_072620.tif"))
+writeRaster(ndvi_073020_macaw, file.path(path_output, "NDVI_073020.tif"))
+writeRaster(ndvi_080220_macaw, file.path(path_output, "NDVI_080220.tif"), overwrite =TRUE)
+
+#add layer to the raster brick 
+macaw_072620 <- addLayer(macaw_072620, ndvi_072620_macaw)
+names(macaw_072620)[13] <- "NDVI"
+macaw_073020 <- addLayer(macaw_073020, ndvi_073020_macaw)
+names(macaw_073020)[13] <- "NDVI"
+macaw_080220 <- addLayer(macaw_080220, ndvi_080220_macaw)
+names(macaw_080220)[13] <- "NDVI"
+
+```
+
+##Vegetation mask 
+```{r}
+hist(macaw_072620$NDVI)
+#build the mask 
+veg_072620 <- reclassify(macaw_072620$NDVI, cbind(-Inf, 0.5, NA))
+veg_073020 <- reclassify(macaw_073020$NDVI, cbind(-Inf, 0.5, NA))
+veg_080220 <- reclassify(macaw_080220$NDVI, cbind(-Inf, 0.5, NA))
+
+#apply the mask 
+macaw_072620_masked <- raster::mask(macaw_072620, veg_072620)
+macaw_073020_masked <- raster::mask(macaw_073020, veg_073020)
+macaw_080220_masked <- raster::mask(macaw_080220, veg_080220)
+
+#output the results
+path_output <- "D:/GRAPEX_2020/Output"
+writeRaster(macaw_073020_masked, file.path(path_output, "macaw_073020_masked.tif"))
+writeRaster(macaw_080220_masked, file.path(path_output, "macaw_080220_masked.tif"))
+
+veg_080220 <- reclassify(macaw_080220$NDVI, cbind(-Inf, 0.5, NA))
+macaw_080220_masked <- raster::mask(macaw_080220, veg_080220)
+writeRaster(ndvi_080220_macaw, file.path(path_output, "NDVI_080220.tif"), overwrite =TRUE)
+writeRaster(macaw_080220_masked, file.path(path_output, "macaw_080220_masked.tif"), overwrite = TRUE)
+
+```
+#Extraction 
+##Simple Average
+```{r}
+#ext_tws_073020 <- raster::extract(macaw_073020_masked, tws_rip720, buffer =5, na.rm = TRUE)
+#class(ext_tws_073020)
+#length(ext_tws_073020)
+
+ext_tws_073020 <- raster::extract(macaw_073020_masked, tws_rip720, buffer = 0.6, na.rm = TRUE, fun = mean, df = TRUE)
+ext_tws_073020$Name <- tws_rip720$Name
+ext_tws_073020$Group <- tws_rip720$Group
+ext_tws_073020$tv <- tws_rip720$tv
+ext_tws_073020$Date <- as.Date("2020-07-30")
+head(ext_tws_073020)
+
+ext_tws_080220 <- raster::extract(macaw_080220_masked, tws_rip720, buffer = 0.6, na.rm = TRUE, fun = mean, df = TRUE)
+ext_tws_080220
+ext_tws_080220$Name <- tws_rip720$Name
+ext_tws_080220$Group <- tws_rip720$Group
+ext_tws_080220$tv <- tws_rip720$tv
+ext_tws_080220$Date <- as.Date("2020-08-02")
+
+#combine 
+ext_tws <- rbind(ext_tws_073020, ext_tws_080220)
+```
+
+#Calculate Index
+##Functions
+```{r}
+#Structure Indices 
+NDVI <- function(macaw){
+  red <- macaw$X670
+  nir <- macaw$X800
+  ndvi <- (nir-red)/(nir+red)
+  return(ndvi)
+}
+
+RDVI <- function(macaw){
+  red <- macaw$X670
+  nir <- macaw$X800
+  rdvi <- (nir-red)/(nir+red)^0.5
+  return(rdvi)
+}
+
+#Chl Indices
+MCARI <- function(macaw){
+  x700 <- macaw$X700
+  x670 <- macaw$X670
+  x550 <- macaw$X550
+  mcari <- ((x700-x670)-0.2*(x700-x550))*(x700/x670)
+  return(mcari)
+}
+
+TCARI <- function(macaw){
+  x700 <- macaw$X700
+  x670 <- macaw$X670
+  x550 <- macaw$X550
+  tcari <- 3*((x700-x670)-0.2*(x700-x550)*(x700/x670))
+  return(tcari)
+}
+
+TCARI.OSAVI <- function(macaw){
+  x700 <- macaw$X700
+  x670 <- macaw$X670
+  x550 <- macaw$X550
+  x800 <- macaw$X800
+  tcari <- 3*((x700-x670)-0.2*(x700-x550)*(x700/x670))
+  osavi <- ((1+0.16)*(x800-x670)/(x800+x670+0.16))
+  tcari.osavi <- tcari/osavi
+  return(tcari.osavi)
+}
+
+RER <- function(macaw){
+  x700 <- macaw$X700
+  x670 <- macaw$X670
+  rer <- x700/x670
+  return(rer)
+}
+
+#xanthophyll Indice
+
+PRI <- function(macaw){
+  x530 <- macaw$X530
+  x570 <- macaw$X570
+  pri <- (x530-x570)/(x530+x570)
+  return(pri)
+}
+
+PRI550 <- function(macaw){
+  x530 <- macaw$X530
+  x550 <- macaw$X550
+  pri550 <- (x530-x550)/(x530+x550)
+  return(pri550)
+}
+
+PRInorm <- function(macaw){
+  #pri
+  x530 <- macaw$X530
+  x570 <- macaw$X570
+  pri <- (x530-x570)/(x530+x570)
+  #rdvi
+  red <- macaw$X670
+  nir <- macaw$X800
+  rdvi <- (nir-red)/(nir+red)^0.5
+  #rer
+  x700 <- macaw$X700
+  x670 <- macaw$X670
+  rer <- x700/x670
+  #PRInorm
+  prinorm <- pri/(rdvi*rer)
+  return(prinorm)
+}
+
+PRInorm550 <- function(macaw){
+  #pri550
+  x530 <- macaw$X530
+  x550 <- macaw$X550
+  pri550 <- (x530-x550)/(x530+x550)
+  #rdvi
+  red <- macaw$X670
+  nir <- macaw$X800
+  rdvi <- (nir-red)/(nir+red)^0.5
+  #rer
+  x700 <- macaw$X700
+  x670 <- macaw$X670
+  rer <- x700/x670
+  #PRInorm
+  prinorm550 <- pri550/(rdvi*rer)
+  return(prinorm550)
+}
+
+#Water Indices
+WI <- function(macaw){
+  x900 <- macaw$X900
+  x970 <- macaw$X970
+  wi <- x900/x970
+  return(wi)
+}
+
+WI.NDVI <- function(macaw){
+  x900 <- macaw$X900
+  x970 <- macaw$X970
+  wi <- x900/x970
+  red <- macaw$X670
+  nir <- macaw$X800
+  ndvi <- (nir-red)/(nir+red)
+  return(wi/ndvi)
+}
+
+```
+
+##Apply the functions 
+```{r}
+ext_tws[,2:13] <- ext_tws[,2:13]/65535
+ext_tws$ndvi <- NDVI(ext_tws)
+ext_tws$pri <- PRI(ext_tws)
+ext_tws$wi <- WI(ext_tws)
+ext_tws$wi.ndvi <- WI.NDVI(ext_tws)
+ext_tws$mcawi <- MCARI(ext_tws)
+ext_tws$tcari.osavi <- TCARI.OSAVI(ext_tws)
+ext_tws$tcari <- TCARI(ext_tws)
+ext_tws$pri550 <- PRI550(ext_tws)
+ext_tws$prinorm <- PRInorm(ext_tws)
+ext_tws$prinorm550 <- PRInorm550(ext_tws)
+ext_tws$rer <- RER(ext_tws)
+ext_tws$rdvi <- RDVI(ext_tws)
+
+```
+
+#Exploratory plots
+##Spectral profile 
+```{r}
+names(ext_tws)
+head(ext_tws)
+
+ext_tws_long <- tidyr::gather(ext_tws[,c(2:13, 15:18)], wavelength, reflectance, X800: X970, factor_key = TRUE)
+ext_tws_long$wavelength <- as.numeric(sub(".","", ext_tws_long$wavelength))
+
+
+ext_tws_long_mean <- aggregate(ext_tws_long$reflectance, by = list("Date" = ext_tws_long$Date, "wavelength"=ext_tws_long$wavelength, "Group" = ext_tws_long$Group), FUN = mean)
+head(ext_tws_long_mean)
+names(ext_tws_long_mean)[4] <- "reflectance"
+
+ggplot(ext_tws_long_mean, aes(x = wavelength, y = reflectance, color = Group)) + geom_line(aes(linetype = as.factor(Date))) + geom_point() + theme_bw() + xlim(450,900)#+ facet_wrap(~Date)
+ggplot(ext_tws_long_mean, aes(x = wavelength, y = reflectance, color = Group)) + geom_line(aes(linetype = as.factor(Date)), size = 1) + geom_point() + theme_bw() + xlim(530,570) + ylim(0.025,0.05)#+ facet_wrap(~Date)
+
+ggplot(ext_tws_long_mean, aes(x = wavelength, y = reflectance, color = Group)) + geom_line(aes(linetype = as.factor(Date)), size =1) + geom_point() + theme_bw()# + xlim(450, 900)#+ facet_wrap(~Date)
+```
+
+##Vegetation Index
+```{r}
+ggplot(ext_tws, aes(x = as.factor(Group), y = pri, col = Group)) + geom_boxplot()
+ggplot(ext_tws, aes(x = as.factor(Group), y = ndvi, col = Group)) + geom_boxplot()
+
+ggplot(ext_tws, aes(x = as.factor(Group), y = pri, col = Group)) + geom_boxplot()
+
+ggplot(ext_tws, aes(x = as.factor(Date), y = pri, col = Group)) + geom_boxplot()
+
+ggplot(ext_tws, aes(x = as.factor(Date), y = ndvi, col = Group)) + geom_boxplot() + xlab("Date") + ylab("NDVI") + theme_bw()
+
+ggplot(ext_tws, aes(x = as.factor(Date), y = prinorm, col = Group)) + geom_boxplot() + ylab("Normalized PRI") +  theme_bw() + xlab("Date")
+
+ggplot(ext_tws, aes(x = as.factor(Date), y = pri/ndvi, col = Group)) + geom_boxplot() + ylab("PRI/NDVI")
+
+ggplot(ext_tws, aes(x = as.factor(Date), y = pri550, col = Group)) + geom_boxplot() + ylab("PRI550") + theme_bw() + xlab("Date")
+ggplot(ext_tws, aes(x = as.factor(Date), y = pri550/rdvi, col = Group)) + geom_boxplot() + ylab("PRI550/NDVI") + theme_bw() + xlab("Date")
+
+ggplot(ext_tws, aes(x = as.factor(Date), y = pri, col = Group)) + geom_boxplot() + ylab("PRI570") + theme_bw()
+
+```
+
+#Produce PRI map 
+```{r}
+pri_073020_macaw <- (macaw_073020_masked$X530 - macaw_073020_masked$X570)/(macaw_073020_masked$X530 + macaw_073020_masked$X570)
+writeRaster(pri_073020_macaw, file.path(path_output, "PRI_073020_macaw.tif"))
+
+pri550_073020_macaw <- (macaw_073020_masked$X530 - macaw_073020_masked$X550)/(macaw_073020_masked$X530 + macaw_073020_masked$X550)
+writeRaster(pri550_073020_macaw, file.path(path_output, "PRI550_073020_macaw.tif"))
+
+pri_080220_macaw <- (macaw_080220_masked$X530 - macaw_080220_masked$X570)/(macaw_080220_masked$X530 + macaw_080220_masked$X570)
+writeRaster(pri_080220_macaw, file.path(path_output, "PRI_080220_macaw.tif"))
+
+pri550_080220_macaw <- (macaw_080220_masked$X530 - macaw_080220_masked$X550)/(macaw_080220_masked$X530 + macaw_080220_masked$X550)
+writeRaster(pri550_080220_macaw, file.path(path_output, "PRI550_080220_macaw.tif"))
+
+```
+#-----------------------------------------------------
+#PRI tower data
+##Read data
+```{r}
+path_tower <- "D:/GRAPEX_2020/PRI_Tower"
+
+#site1
+site1_2020 <- readxl::read_excel(file.path(path_tower, "RippSoils_1_PRI_2020.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","Down532","Down570","PRI_Ind"))
+site1_2020
+
+site1_2020 <- readxl::read_excel(file.path(path_tower, "RippSoils_1_PRI_2020.xlsx"), skip = 5)
+site1_2020 <- read_excel(file.path(path_tower, "RippSoils_1_PRI_2020.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","Down532","Down570","PRI_Ind"))
+str(site1_2020)
+site1_2020 <- site1_2020[,c("TIMESTAMP","Site", "Down532", "Down570")]
+site1_2020$Site <- "Block_1"
+#site2
+site2_2020 <- read_excel(file.path(path_tower, "RippSoils_2_PRI_2020.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","PRI","Down532","Up532-2","Down570","Up570-2","PRI_Ind1","PRI_Ind2", "NAs"))
+site2_2020 <- site2_2020[,c("TIMESTAMP","Site", "Down532","Up532-2","Down570","Up570-2")]
+site2_2020$Site <- "Block_2"
+#Site3
+site3_2020 <- read_excel(file.path(path_tower, "RippSoils_3_PRI_2020.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","Down532","Down570","PRI_Ind"))
+str(site3_2020)
+site3_2020 <- site3_2020[,c("TIMESTAMP","Site", "Down532", "Down570")]
+site3_2020$Site <- "Block_3"
+#Site4 
+site4_2020 <- read_excel(file.path(path_tower, "RippSoils_4_PRI_2020.xlsx"), skip = 5)
+site4_2020 <- site4_2020[,c(1:10)]
+colnames(site4_2020) <- c("TIMESTAMP","Record","Site","PRI","Down532","Up532-4","Down570","Up570-4","PRI_Ind1","PRI_Ind2")
+site4_2020 <- site4_2020[,c("TIMESTAMP","Site", "Down532","Up532-4","Down570","Up570-4")]
+site4_2020$Site <- "Block_4"
+site4_2020$Down532 <- as.numeric(site4_2020$Down532)
+site4_2020$`Up532-4` <- as.numeric(site4_2020$`Up532-4`)
+site4_2020$Down570 <- as.numeric(site4_2020$Down570)
+site4_2020$`Up570-4` <- as.numeric(site4_2020$`Up570-4`)
+
+```
+
+##Clean data
+```{r}
+##add date 
+site1_2020$Date <- lubridate::date(site1_2020$TIMESTAMP)
+site2_2020$Date <- lubridate::date(site2_2020$TIMESTAMP)
+site3_2020$Date <- lubridate::date(site3_2020$TIMESTAMP)
+site4_2020$Date <- lubridate::date(site4_2020$TIMESTAMP)
+#subset the time between 05/21 to 08/29
+site1_2020 <- subset(site1_2020, Date>= "2020-05-22" & Date <= "2020-07-06")
+site2_2020 <- subset(site2_2020, Date>= "2020-05-22" & Date <= "2020-07-06")
+site3_2020 <- subset(site3_2020, Date>= "2020-05-22" & Date <= "2020-07-06")
+site4_2020 <- subset(site4_2020, Date>= "2020-05-22" & Date <= "2020-07-06")
+dim(site1_2020);dim(site2_2020);dim(site3_2020);dim(site4_2020) #they have the same dimension
+#there're quite a lot of missing data in site 2 (mainly from 07/26 to 08/09)
+
+##Combine them together 
+PRIall_2020 <- data.frame("Site" = rep(c("Block1","Block2","Block3","Block4"), each = 4416), 
+                     "TIMESTAMP" = c(site1_2020$TIMESTAMP, site2_2020$TIMESTAMP, site3_2020$TIMESTAMP, site4_2020$TIMESTAMP),
+                     "Down532" = c(site1_2020$Down532, site2_2020$Down532, site3_2020$Down532, site4_2020$Down532), 
+                     "Down570" = c(site1_2020$Down570, site2_2020$Down570, site3_2020$Down570, site4_2020$Down570),
+                     "Up532-2" = c(site2_2020$`Up532-2`, site2_2020$`Up532-2`, site2_2020$`Up532-2`, site2_2020$`Up532-2`),
+                     "Up570-2" = c(site2_2020$`Up570-2`, site2_2020$`Up570-2`, site2_2020$`Up570-2`, site2_2020$`Up570-2`),
+                     "R532-2" = 0, 
+                     "R570-2" = 0,
+                     "PRI-2" = 0, 
+                     "Up532-4" = c(site4_2020$`Up532-4`, site4_2020$`Up532-4`, site4_2020$`Up532-4`, site4_2020$`Up532-4`),
+                     "Up570-4" = c(site4_2020$`Up570-4`, site4_2020$`Up570-4`, site4_2020$`Up570-4`, site4_2020$`Up570-4`),
+                     "R532-4" = 0,
+                     "R570-4" = 0,
+                     "PRI-4" = 0,
+                     "Up532-a" = 0, 
+                     "Up570-a" = 0, 
+                     "R532-a" = 0, 
+                     "R570-a" = 0,
+                     "PRI-a" = 0)
+PRIall_2020$Date <- lubridate::date(PRIall_2020$TIMESTAMP)
+dim(PRIall_2020)
+
+##calculate some columns 
+PRIall_2020$R532.2 = PRIall_2020$Down532/PRIall_2020$Up532.2
+PRIall_2020$R570.2 = PRIall_2020$Down570/PRIall_2020$Up570.2
+PRIall_2020$PRI.2 = (PRIall_2020$R532.2 - PRIall_2020$R570.2)/(PRIall_2020$R532.2 + PRIall_2020$R570.2)
+PRIall_2020$R532.4 = PRIall_2020$Down532/PRIall_2020$Up532.4
+PRIall_2020$R570.4 = PRIall_2020$Down570/PRIall_2020$Up570.4
+PRIall_2020$PRI.4 = (PRIall_2020$R532.4 - PRIall_2020$R570.4)/(PRIall_2020$R532.4 + PRIall_2020$R570.4)
+PRIall_2020$Up532.a = rowMeans(cbind(PRIall_2020$Up532.2, PRIall_2020$Up532.4),na.rm = TRUE)
+PRIall_2020$Up570.a = rowMeans(cbind(PRIall_2020$Up570.2, PRIall_2020$Up570.4),na.rm = TRUE)
+PRIall_2020$R532.a = PRIall_2020$Down532/PRIall_2020$Up532.a
+PRIall_2020$R570.a = PRIall_2020$Down570/PRIall_2020$Up570.a
+PRIall_2020$PRI.a = (PRIall_2020$R532.a - PRIall_2020$R570.a)/(PRIall_2020$R532.a + PRIall_2020$R570.a)
+
+PRIall_2020$Time <- lubridate::hour(PRIall_2020$TIMESTAMP) + minute(PRIall_2020$TIMESTAMP)/60 + second(PRIall_2020$TIMESTAMP)/3600
+
+
+```
+
+##Seasonal Change 
+###Function to select Only noon time and dates
+```{r}
+noon_selection <- function(data, early, late){
+  data_noon <- data[data$Time >= early & data$Time <= late,]
+  return(data_noon)
+}
+
+date_selection <- function(data, begin, end){
+  data_date_selection <- data[data$Date >= begin & data$Date <= end,]
+  return(data_date_selection)
+}
+
+
+#apply
+PRInoon <- noon_selection(PRIall, early = 12, late = 14)
+unique(PRInoon$Time)
+```
+###Function to calculate daily average using the noon time only
+```{r}
+#function  
+daily_ave <- function(data, early, late, begin, end){
+  #between certain dates
+  PRI_date <- date_selection(data, begin, end)
+  #noon average
+  PRI_date_noon <- noon_selection(PRI_date, early, late)
+  #split
+  PRI_split <- split(PRI_date_noon, PRI_date_noon$Date)
+  #lapply
+  PRI_ave <- lapply(lapply(PRI_split, "[[", 14), mean)
+  PRI_ave <- data.frame("Date" = ymd(names(PRI_ave)), "PRI" = unlist(PRI_ave))
+  #result
+  row.names(PRI_ave) <- NULL
+  return(PRI_ave)
+}
+```
+###Apply the function 
+```{r}
+PRI_daily_1_2020 <- daily_ave(subset(PRIall_2020, Site == "Block1"), 11,15, "2020-05-22", "2020-07-06")
+PRI_daily_1_2020$Site = "Block1"
+PRI_daily_2_2020 <- daily_ave(subset(PRIall_2020, Site == "Block2"), 11,15, "2020-05-22", "2020-07-06")
+PRI_daily_2_2020$Site = "Block2"
+PRI_daily_3_2020 <- daily_ave(subset(PRIall_2020, Site == "Block3"), 11,15, "2020-05-22", "2020-07-06")
+PRI_daily_3_2020$Site = "Block3"
+PRI_daily_4_2020 <- daily_ave(subset(PRIall_2020, Site == "Block4"), 11,15, "2020-05-22", "2020-07-06")
+PRI_daily_4_2020$Site = "Block4"
+PRI_daily_2020 <- rbind(PRI_daily_1_2020, PRI_daily_2_2020, PRI_daily_3_2020, PRI_daily_4_2020)
+
+ggplot(PRI_daily_2020, aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point() + geom_line() + ggtitle("PRI Daily Average 2020") + labs(color = "Site") + ggpubr::theme_pubr() #+ ylim(c(-0.15, 0.15))
+#ggplot(subset(PRI_daily, Site!= "Block4"), aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point() + geom_line() + ggtitle("PRI Daily Average 2020") + ylim(c(-0.15, 0.1)) + labs(color = "Site")
+
+```
+###Smooth the data
