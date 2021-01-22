@@ -15,7 +15,7 @@ library(sp)
 library(tidyr)
 library(lubridate)
 library(readxl)
-
+library(gridExtra)
 ```
 
 
@@ -339,12 +339,10 @@ writeRaster(pri550_080220_macaw, file.path(path_output, "PRI550_080220_macaw.tif
 path_tower <- "D:/GRAPEX_2020/PRI_Tower"
 
 #site1
-site1_2020 <- readxl::read_excel(file.path(path_tower, "RippSoils_1_PRI_2020.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","Down532","Down570","PRI_Ind"))
-site1_2020
-
 site1_2020 <- readxl::read_excel(file.path(path_tower, "RippSoils_1_PRI_2020.xlsx"), skip = 5)
-site1_2020 <- read_excel(file.path(path_tower, "RippSoils_1_PRI_2020.xlsx"), skip = 5, col_names = c("TIMESTAMP","Record","Site","Down532","Down570","PRI_Ind"))
-str(site1_2020)
+names(site1_2020)
+site1_2020 <- site1_2020[,c(1:6)]
+colnames(site1_2020) <- c("TIMESTAMP","Record","Site","Down532","Down570","PRI_Ind")
 site1_2020 <- site1_2020[,c("TIMESTAMP","Site", "Down532", "Down570")]
 site1_2020$Site <- "Block_1"
 #site2
@@ -377,15 +375,21 @@ site2_2020$Date <- lubridate::date(site2_2020$TIMESTAMP)
 site3_2020$Date <- lubridate::date(site3_2020$TIMESTAMP)
 site4_2020$Date <- lubridate::date(site4_2020$TIMESTAMP)
 #subset the time between 05/21 to 08/29
-site1_2020 <- subset(site1_2020, Date>= "2020-05-22" & Date <= "2020-07-06")
-site2_2020 <- subset(site2_2020, Date>= "2020-05-22" & Date <= "2020-07-06")
-site3_2020 <- subset(site3_2020, Date>= "2020-05-22" & Date <= "2020-07-06")
-site4_2020 <- subset(site4_2020, Date>= "2020-05-22" & Date <= "2020-07-06")
+site1_2020 <- subset(site1_2020, Date>= "2020-03-01" & Date <= "2020-10-01") #20641,5
+site1_2020 <- site1_2020[1:20640,]
+site2_2020 <- subset(site2_2020, Date>= "2020-03-01" & Date <= "2020-10-01") #20640,7
+site3_2020 <- subset(site3_2020, Date>= "2020-03-01" & Date <= "2020-10-01") #20640,5
+site4_2020 <- subset(site4_2020, Date>= "2020-03-01" & Date <= "2020-10-01") #20640,7
 dim(site1_2020);dim(site2_2020);dim(site3_2020);dim(site4_2020) #they have the same dimension
 #there're quite a lot of missing data in site 2 (mainly from 07/26 to 08/09)
+sum(is.na(site1_2020)) #3584
+sum(is.na(site2_2020)) #2616
+sum(is.na(site3_2020)) #3862
+sum(is.na(site4_2020)) #6588
+
 
 ##Combine them together 
-PRIall_2020 <- data.frame("Site" = rep(c("Block1","Block2","Block3","Block4"), each = 4416), 
+PRIall_2020 <- data.frame("Site" = rep(c("Block1","Block2","Block3","Block4"), each = 20640), 
                      "TIMESTAMP" = c(site1_2020$TIMESTAMP, site2_2020$TIMESTAMP, site3_2020$TIMESTAMP, site4_2020$TIMESTAMP),
                      "Down532" = c(site1_2020$Down532, site2_2020$Down532, site3_2020$Down532, site4_2020$Down532), 
                      "Down570" = c(site1_2020$Down570, site2_2020$Down570, site3_2020$Down570, site4_2020$Down570),
@@ -440,7 +444,7 @@ date_selection <- function(data, begin, end){
 
 
 #apply
-PRInoon <- noon_selection(PRIall, early = 12, late = 14)
+PRInoon <- noon_selection(PRIall_2020, early = 12, late = 14)
 unique(PRInoon$Time)
 ```
 ###Function to calculate daily average using the noon time only
@@ -454,27 +458,81 @@ daily_ave <- function(data, early, late, begin, end){
   #split
   PRI_split <- split(PRI_date_noon, PRI_date_noon$Date)
   #lapply
-  PRI_ave <- lapply(lapply(PRI_split, "[[", 14), mean)
+  PRI_ave <- lapply(lapply(PRI_split, "[[", 19), mean)
   PRI_ave <- data.frame("Date" = ymd(names(PRI_ave)), "PRI" = unlist(PRI_ave))
   #result
   row.names(PRI_ave) <- NULL
   return(PRI_ave)
 }
+
+#14: PRI.4; 19: PRI.a;  9: PRI.2
 ```
 ###Apply the function 
 ```{r}
-PRI_daily_1_2020 <- daily_ave(subset(PRIall_2020, Site == "Block1"), 11,15, "2020-05-22", "2020-07-06")
+PRI_daily_1_2020 <- daily_ave(subset(PRIall_2020, Site == "Block1"), 12,14, "2020-03-01", "2020-10-01")
 PRI_daily_1_2020$Site = "Block1"
-PRI_daily_2_2020 <- daily_ave(subset(PRIall_2020, Site == "Block2"), 11,15, "2020-05-22", "2020-07-06")
+PRI_daily_2_2020 <- daily_ave(subset(PRIall_2020, Site == "Block2"), 12,14, "2020-03-01", "2020-10-01")
 PRI_daily_2_2020$Site = "Block2"
-PRI_daily_3_2020 <- daily_ave(subset(PRIall_2020, Site == "Block3"), 11,15, "2020-05-22", "2020-07-06")
+PRI_daily_3_2020 <- daily_ave(subset(PRIall_2020, Site == "Block3"), 12,14, "2020-03-01", "2020-10-01")
 PRI_daily_3_2020$Site = "Block3"
-PRI_daily_4_2020 <- daily_ave(subset(PRIall_2020, Site == "Block4"), 11,15, "2020-05-22", "2020-07-06")
+PRI_daily_4_2020 <- daily_ave(subset(PRIall_2020, Site == "Block4"), 12,14, "2020-03-01", "2020-10-01")
 PRI_daily_4_2020$Site = "Block4"
 PRI_daily_2020 <- rbind(PRI_daily_1_2020, PRI_daily_2_2020, PRI_daily_3_2020, PRI_daily_4_2020)
 
 ggplot(PRI_daily_2020, aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point() + geom_line() + ggtitle("PRI Daily Average 2020") + labs(color = "Site") + ggpubr::theme_pubr() #+ ylim(c(-0.15, 0.15))
 #ggplot(subset(PRI_daily, Site!= "Block4"), aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point() + geom_line() + ggtitle("PRI Daily Average 2020") + ylim(c(-0.15, 0.1)) + labs(color = "Site")
 
+ggplot(subset(PRI_daily_2020, Date > "2020-07-25" & Date < "2020-08-05"), aes(x = Date, y = PRI, color = as.factor(Site))) + geom_point() + geom_line(size = 1) + ggtitle("PRI Daily Average 2020") + labs(color = "Site") + ggpubr::theme_pubr() + geom_vline(xintercept = as.Date("2020-07-26","2020-07-30","2020-08-05"))#+ ylim(c(-0.15, 0.15))
+
+
 ```
 ###Smooth the data
+
+##Diurnal Change
+###Upward sensor
+```{r}
+##site 2
+p1 <- ggplot(subset(PRIall_2020, Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Up532.2)) + geom_line() + ggtitle("Incoming Radiation Up532 Site 2") + xlab("") + ylab("Up532")
+p2 <- ggplot(subset(PRIall_2020, Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Up570.2)) + geom_line() + ggtitle("Incoming Radiation Up570 Site 2") + xlab("Time") + ylab("Up570")
+grid.arrange(p1, p2, nrow = 2)
+##site 4
+p1 <- ggplot(subset(PRIall_2020, Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Up532.4)) + geom_line() + ggtitle("Incoming Radiation Up532 Site 4") + xlab(" ") + ylab("Up532")
+p2 <- ggplot(subset(PRIall_2020, Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Up570.4)) + geom_line() + ggtitle("Incoming Radiation Up570 Site 4") + xlab("Time") + ylab("Up570")
+grid.arrange(p1, p2, nrow = 2)
+##Average
+p1 <- ggplot(subset(PRIall_2020, Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Up532.a)) + geom_line() + ggtitle("Incoming Radiation Up532 Average of Site 2 & Site 4") + xlab(" ") + ylab("Up532")
+p2 <- ggplot(subset(PRIall_2020, Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Up570.a)) + geom_line() + ggtitle("Incoming Radiation Up570 Average of Site 2 & Site 4") + xlab("Time") + ylab("Up570")
+grid.arrange(p1, p2, nrow = 2)
+
+```
+###Downward sensor
+```{r}
+#Down532
+ggplot(subset(noon_selection(PRIall_2020, 6,20), Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Down532)) +geom_line() + facet_wrap(~Site, nrow = 4) + xlab("Time") + ggtitle("Down532")
+#Down570
+ggplot(subset(noon_selection(PRIall_2020, 6,20), Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Down570)) +geom_line() + facet_wrap(~Site, nrow = 4) + xlab("Time") + ggtitle("Down570")
+
+ggplot(subset(noon_selection(PRIall_2020, 6,20), Date > "2020-07-25" & Date < "2020-08-05"), aes(x = TIMESTAMP, y = Down532,color = Site)) +geom_line(size = 1)+ xlab("Time") + ggtitle("Down532")
+
+```
+###PRI Diurnal Cycle
+```{r}
+names(PRIall_2020)
+
+ggplot(subset(noon_selection(PRIall_2020, 10,15), Date > "2020-07-25" & Date < "2020-08-05"), aes(x = Time, y = PRI.4,color = as.factor(Date))) + facet_wrap(~Site) +geom_line(size = 1)+ xlab("Time") + ggtitle("PRI") + theme_bw()+ ylab("PRI")
+
+ggplot(subset(noon_selection(PRIall_2020, 10,15), Date == "2020-07-26" | Date =="2020-07-30" | Date == "2020-08-02"), aes(x = Time, y = PRI.4,color = as.factor(Date))) + facet_wrap(~Site) +geom_line(size = 1)+ xlab("Time") + ggtitle("PRI") + theme_bw() + ylab("PRI")
+
+ggplot(subset(noon_selection(PRIall_2020, 10,15), Date == "2020-07-26" | Date =="2020-07-30" | Date == "2020-08-02"), aes(x = Time, y = PRI.a,color = as.factor(Date))) + facet_wrap(~Site) +geom_line(size = 1)+ xlab("Time") + ggtitle("PRI") + theme_bw() + ylab("PRI")
+
+ggplot(subset(noon_selection(PRIall_2020, 7,19), Date == "2020-07-26" | Date =="2020-07-30" | Date == "2020-08-02"), aes(x = Time, y = PRI.4,color = as.factor(Date))) + facet_wrap(~Site) +geom_line(size = 1)+ xlab("Time") + ggtitle("PRI") + theme_bw() + ylab("PRI")
+
+```
+
+#Weather data 
+```{r}
+path_weather <- "D:/GRAPEX_2020/Weather"
+cimis_rip <- read.csv(file.path(path_weather, "hlymet007.csv"))
+dim(cimis_rip)
+```
+
